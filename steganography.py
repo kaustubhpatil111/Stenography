@@ -1,42 +1,98 @@
 from PIL import Image
 
+# Constants
+END_OF_MESSAGE_DELIMITER = '1111111111111110'  # 16-bit delimiter to mark the end of the message
+
+def _message_to_binary(message):
+    """Convert a message string to a binary string."""
+    return ''.join(format(ord(char), '08b') for char in message)
+
+def _binary_to_message(binary_str):
+    """Convert a binary string to a message string."""
+    message = ''
+    for i in range(0, len(binary_str), 8):
+        byte = binary_str[i:i+8]
+        message += chr(int(byte, 2))
+    return message
+
+def _validate_image_capacity(image, binary_message):
+    """Check if the image has enough capacity to store the binary message."""
+    required_pixels = len(binary_message) // 3 + (1 if len(binary_message) % 3 != 0 else 0)
+    available_pixels = image.width * image.height
+    if required_pixels > available_pixels:
+        raise ValueError(f"Message is too long to be encoded in the image. Required pixels: {required_pixels}, Available pixels: {available_pixels}")
+
 def encode_message(image_path, message, output_path):
-    img = Image.open(image_path)
-    binary_message = ''.join(format(ord(char), '08b') for char in message)
-    binary_message += '1111111111111110'  # End of message delimiter
+    """
+    Encode a message into an image using LSB steganography.
 
-    if len(binary_message) > img.width * img.height * 3:
-        raise ValueError("Message is too long to be encoded in the image.")
+    :param image_path: Path to the input image.
+    :param message: The secret message to encode.
+    :param output_path: Path to save the encoded image.
+    """
+    try:
+        # Open the image
+        img = Image.open(image_path)
+        if img.mode not in ['RGB', 'RGBA']:
+            raise ValueError("Image must be in RGB or RGBA mode.")
 
-    pixels = list(img.getdata())
-    index = 0
+        # Convert the message to binary and add the delimiter
+        binary_message = _message_to_binary(message) + END_OF_MESSAGE_DELIMITER
 
-    for i in range(len(pixels)):
-        pixel = list(pixels[i])
-        for j in range(3):  # RGB
-            if index < len(binary_message):
-                pixel[j] = pixel[j] & ~1 | int(binary_message[index])
-                index += 1
-        pixels[i] = tuple(pixel)
+        # Validate if the image can store the message
+        _validate_image_capacity(img, binary_message)
 
-    encoded_img = Image.new(img.mode, img.size)
-    encoded_img.putdata(pixels)
-    encoded_img.save(output_path)
+        # Get pixel data
+        pixels = list(img.getdata())
+        binary_index = 0
+
+        # Encode the message into the image
+        new_pixels = []
+        for pixel in pixels:
+            new_pixel = list(pixel)
+            for i in range(3):  # Modify only the RGB channels
+                if binary_index < len(binary_message):
+                    new_pixel[i] = new_pixel[i] & ~1 | int(binary_message[binary_index])
+                    binary_index += 1
+            new_pixels.append(tuple(new_pixel))
+
+        # Create and save the encoded image
+        encoded_img = Image.new(img.mode, img.size)
+        encoded_img.putdata(new_pixels)
+        encoded_img.save(output_path)
+        print(f"Message encoded successfully and saved to {output_path}")
+
+    except Exception as e:
+        raise ValueError(f"Error during encoding: {e}")
 
 def decode_message(image_path):
-    img = Image.open(image_path)
-    pixels = list(img.getdata())
-    binary_message = ''
+    """
+    Decode a message from an image using LSB steganography.
 
-    for pixel in pixels:
-        for value in pixel[:3]:  # RGB
-            binary_message += str(value & 1)
+    :param image_path: Path to the encoded image.
+    :return: The decoded message.
+    """
+    try:
+        # Open the image
+        img = Image.open(image_path)
+        if img.mode not in ['RGB', 'RGBA']:
+            raise ValueError("Image must be in RGB or RGBA mode.")
 
-    message = ''
-    for i in range(0, len(binary_message), 8):
-        byte = binary_message[i:i+8]
-        if byte == '11111110':  # End of message delimiter
-            break
-        message += chr(int(byte, 2))
+        # Extract binary message from the image
+        binary_message = ''
+        for pixel in img.getdata():
+            for value in pixel[:3]:  # Read only the RGB channels
+                binary_message += str(value & 1)
 
-    return message
+        # Find the end-of-message delimiter
+        delimiter_index = binary_message.find(END_OF_MESSAGE_DELIMITER)
+        if delimiter_index == -1:
+            raise ValueError("No valid message found in the image.")
+
+        # Extract and convert the binary message to text
+        binary_message = binary_message[:delimiter_index]
+        message = _binary_to_message(binary_message)
+        return message
+
+    except Exception as e:
+        raise ValueError(f"Error during decoding: {e}")
